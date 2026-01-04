@@ -197,7 +197,7 @@ df.select(
 )
 ```
 
-```
+```json
 [
   {
     "type": "Movie",
@@ -248,7 +248,7 @@ df.select(
 )
 ```
 
-```
+```json
 [
   {
     "DATA": {
@@ -288,7 +288,7 @@ df.select(
 )
 ```
 
-```
+```json
 [
   {
     "DATA_A1": {
@@ -332,7 +332,7 @@ We can reverse this with `.unnest()`:
 )
 ```
 
-```
+```json
 [
   {
     "type": "Movie",
@@ -367,7 +367,7 @@ df.select(
 )
 ```
 
-```
+```json
 [
   {
     "DATA": ["Movie", "TV-Y", "United States"]
@@ -393,7 +393,7 @@ df.select(
 )
 ```
 
-```
+```json
 [
   {
     "dimensions": [
@@ -417,6 +417,7 @@ df.select(
   }
 ]
 ```
+
 
 # Lists
 
