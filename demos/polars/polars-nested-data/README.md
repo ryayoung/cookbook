@@ -1,168 +1,36 @@
-# Working with nested data in Polars
+# Nested data in Polars
 
-## Imports
+An Arrow-based engine - like Polars - will let you work with deeply-nested objects
+without the *cost* of them existing. Because they don't. A deep Struct column will
+consume no more memory, and its data is no slower to access, than if its fields
+were stored as separate top-level columns.
+
+## Stop
+
+Before continuing, please read:
+
+- [../polars-style-and-syntax/README.md](../polars-style-and-syntax/README.md)
+- [../arrow-simplified/README.md](../arrow-simplified/README.md)
+
+
+## Go
 
 ```python
-# For less-commonly-used things
 import polars as pl
-# Always-very-common Expr entrypoints
 from polars import (
-    # Selecting columns
     col as c,
     selectors as cs,
-    # Creating nested data structures and literal values
     lit,
+    when,
     struct,
     concat_arr as array,
-    # Other core keywords
-    when,
 )
 ```
 
-## **Please**
-
-Here's the same code, written twice.
-
-The two queries *really are* identical.
-They do the same thing, in the same way: They create the same expressions
-using the same API to send the same query to the same engine.
-
-**Same code, V1**
-
-```python
-.sort( [ 'period', pl.col('stuff').cast(pl.Int64) ] )
-.with_columns(
-    [
-        ( ( pl.col("current") - pl.col("prior") ) / pl.col("prior") ).alias("pct_change"),
-        ( pl.col("sum_stuff") / pl.col('count_stuff') ).alias("avg_stuff"),
-    ]
-)
-```
-
-**Same code, V2**
-
-```python
-.sort(c.period, c.stuff.cast(int))
-.with_columns(
-    pct_change=(c.current - c.prior) / c.prior,
-    avg_stuff=(c.sum_stuff / c.count_stuff),
-)
-```
-
-Languages have formatting rules and standards. Treat Polars like a language.
-Pick standards, and stick to them.
-
-### What should you do?
-
-Stick to 'V2'. Use 'V1' features *when-needed*.
-Prioritize ergonomics, because you'll be repeating the same pattern tens of thousands of times.
-
-For example, instead of `.sort("period").drop("stuff")`, prefer
-`.sort(c.period).drop("stuff")`, because `.sort` takes expressions.
 
 ---
 
-## Arrow
-
-An engine that uses the [Arrow](https://arrow.apache.org/docs/dev/format/Columnar.html)
-approach for its memory layout
-(like Polars) will let you work with nested object/array data **without**
-the memory and compute cost of those objects and arrays existing
-in your program. Because they don't exist.
-
-Which means: If you have a *hand-rolled* algorithm involving
-a long sequence of deeply-nested objects, you could rewrite all the
-data structures in C or Assembly and **still** be 10x less memory efficient
-than an equivalent program that uses Arrow's layout strategy.
-
-Where yours might allocate 500 million C structs and kill a large VM,
-an equivalent program with an Arrow-inspired layout might allocate 1 struct
-and run on a laptop.
-
----
-
-In Polars, these two dataframes have near-identical memory footprints
-at scale (i.e. assuming you have more than this example's 4 rows):
-
-**1**
-
-```json
-[
-  {
-    "point_a_x": 1,
-    "point_a_y": 5,
-    "point_b_x": 9,
-    "point_b_y": 13
-  },
-  {
-    "point_a_x": 2,
-    "point_a_y": 6,
-    "point_b_x": 10,
-    "point_b_y": 14
-  },
-  {
-    "point_a_x": 3,
-    "point_a_y": 7,
-    "point_b_x": 11,
-    "point_b_y": 15
-  },
-  ...other rows
-]
-```
-
-**2**
-
-```json
-[
-  {
-    "data": {
-      "line": {
-        "point_a": {
-          "x": 1,
-          "y": 5
-        },
-        "point_b": {
-          "x": 9,
-          "y": 13
-        }
-      }
-    }
-  },
-  {
-    "data": {
-      "line": {
-        "point_a": {
-          "x": 2,
-          "y": 6
-        },
-        "point_b": {
-          "x": 10,
-          "y": 14
-        }
-      }
-    }
-  },
-  {
-    "data": {
-      "line": {
-        "point_a": {
-          "x": 3,
-          "y": 7
-        },
-        "point_b": {
-          "x": 11,
-          "y": 15
-        }
-      }
-    }
-  },
-  ...other rows
-]
-```
-
----
-
-Let's start with this dataframe of 2 rows.
+Start with this data.
 
 ```python
 df = pl.DataFrame({
@@ -185,8 +53,7 @@ shape: (2, 4)
 └───────┴────────┴───────────────┴─────────┘
 ```
 
-We will use JSON outputs when printing dataframes.
-(Call `.to_dicts()` on each result.)
+We will print dataframes as JSON. (Call `.to_dicts()` on each result.)
 
 ```python
 df.select(
@@ -227,15 +94,16 @@ If you had a `name` column with values...
 { first: "Jane", last: "Doe" },
 ```
 
-...`name`'s dtype is `Struct({"first": String, "last": String})`.
+...then `name`'s dtype is `pl.Struct({"first": pl.String, "last": pl.String})`.
 
 > [!IMPORTANT]
 > This has **near-zero overhead** compared to separate `first_name`/`last_name` columns,
-> because no `name` objects actually exist. Instead, *basically*, the column itself has
-> columns. And each column *doesn't* store a sequence of name strings. It stores *a string*.
-> For the entire column. That's Arrow, in a nutshell.
+> because no `name` objects actually exist in memory. Instead, *basically*, the column
+> itself has columns.
 
-Let's combine our 4 columns into 1 struct column.
+---
+
+Combine our 4 columns into a struct column, `DATA`
 
 ```python
 df.select(
@@ -321,15 +189,12 @@ df.select(
 ]
 ```
 
-We can reverse this with `.unnest()`:
+Reverse it with `.unnest()`, and we're back where we started:
 
 ```python
-(
-    <previous_select_query>
-    .unnest("DATA_A1", "DATA_B1")
-    .unnest("DATA_B2")
-    .unnest("DATA_B3")
-)
+.unnest("DATA_A1", "DATA_B1")
+.unnest("DATA_B2")
+.unnest("DATA_B3")
 ```
 
 ```json
@@ -354,6 +219,7 @@ We can reverse this with `.unnest()`:
 Unlike lists, arrays are fixed-length.
 
 In how you'll *use* them, arrays are more like structs than lists.
+Think of `array` almost like Python's `tuple`.
 
 Same query from earlier, but with `array` instead of `struct`.
 
@@ -363,6 +229,7 @@ df.select(
         c.type,
         c.rating,
         c.country,
+        c.runtime.cast(str),
     )
 )
 ```
@@ -370,10 +237,10 @@ df.select(
 ```json
 [
   {
-    "DATA": ["Movie", "TV-Y", "United States"]
+    "DATA": ["Movie", "TV-Y", "United States", "3"]
   },
   {
-    "DATA": ["Movie", "TV-14", "Japan"]
+    "DATA": ["Movie", "TV-14", "Japan", "5"]
   }
 ]
 ```
@@ -423,7 +290,7 @@ df.select(
 
 Key insight: **A list is an aggregation. The simplest kind.**
 
-## In a group-by/agg, `.agg()` will take any kind of expression
+### `.agg()` will take any kind of expression
 
 You **don't** have to pass an aggregation function.
 
@@ -475,10 +342,10 @@ print(
 └───────────┴────────────┘
 ```
 
+
 # Building deep, hierarchical trees
 
-In the following examples, we will use **only** `group_by()` and `agg()`
-to transform this data...
+We will use **only** `group_by()` and `agg()` to transform this data...
 
 ```
 ┌───────────┬────────┬─────────┬─────────┐
@@ -495,7 +362,7 @@ to transform this data...
 └───────────┴────────┴─────────┴─────────┘
 ```
 
-...into the following tree object:
+...into this tree object:
 
 ```json
 {
@@ -582,24 +449,29 @@ df = pl.DataFrame(
 ```
 
 
-### Building the JSON Tree
+### Building a JSON Tree
 
-*How do I make data so deeply nested? Do I put one `agg()` inside another?*
+*How do I make it so deeply nested?*
 
-Nope.
+**The trick**: Use multiple `group_by().agg()` steps, sequentially. One for each
+list-nesting level.
 
-**The trick**: Apply _multiple_ `group_by().agg()` transformations, sequentially, for each
-list-nesting level. Start with the *deepest*, and work your way *back up* to the root.
+Start with the *deepest* (leaf-level), and work your way *back up* to the root.
 
-*Level 1* (leaves): Aggregate the `show_id`-level (leaf) nodes - `struct(show_id, runtime)` - as
-a `children` list under each `show_type` + `rating` combination.
+---
+
+#### Level 2 (leaves)
+
+Aggregate `show_id`-level children for each `show_type` + `rating` combination.
 
 ```python
-df.group_by(
+df
+.group_by(
     c.show_type,
     c.rating,
-).agg(
-    children=struct(
+)
+.agg(
+    children=struct(  # Make struct, but don't apply an aggregation func
         c.show_id,
         c.runtime,
     ),
@@ -643,11 +515,12 @@ df.group_by(
 ]
 ```
 
-*Level 2*: Aggregate the `rating`-level nodes - `struct(rating, children)` - as a `children`
-list under each `show_type`.
+#### Level 1
+
+Aggregate `rating`-level children for each `show_type`
 
 ```python
-<previous_code>
+...
 .group_by(
     c.show_type,
 )
@@ -702,12 +575,12 @@ list under each `show_type`.
 ]
 ```
 
-*Level 3* (root): Same as the prior step, but we need to cheat and make
-a constant column, `entity=lit('show')` to serve as the root node in our tree,
-so we can aggregate the `show_type`s into a single `children` list.
+#### Level 0 (root)
+
+Group by a constant `lit('show')` to get a single `children` list.
 
 ```python
-<previous_code>
+...
 .group_by(
     entity=lit('show'),
 )
@@ -716,27 +589,29 @@ so we can aggregate the `show_type`s into a single `children` list.
         c.show_type,
         c.children,
     ),
-).to_dicts()[0]
+)
+.to_dicts()[0]
 ```
 
-which gives us our final result.
+That's it.
 
-Here's the full query:
+Here's the full query, start to finish.
 
 ```python
 (
     df
-    # Level 1: [ { show_id, runtime }, ...]
+    # Level 2: Totals -> Show Type -> Rating
     .group_by(
         c.show_type,
         c.rating,
-    ).agg(
+    )
+    .agg(
         children=struct(
             c.show_id,
             c.runtime,
         ),
     )
-    # Level 2: [ { rating, children }, ...]
+    # Level 1: Totals -> Show Type
     .group_by(
         c.show_type,
     )
@@ -746,9 +621,9 @@ Here's the full query:
             c.children,
         ),
     )
-    # Level 3: [ { show_type, children }, ...]
+    # Level 0: Totals
     .group_by(
-        entity=lit('show'),  # (constant column, for the root)
+        entity=lit('show'),  # (constant value)
     )
     .agg(
         children=struct(
@@ -756,7 +631,7 @@ Here's the full query:
             c.children,
         ),
     )
-    # Extract root (row 0): { entity, children }
+    # Finish: extract root row
     .to_dicts()[0]
 )
 ```
@@ -810,18 +685,15 @@ Here's the full query:
 
 ### Guess what
 
-Everything we just did was **non-destructive and easily reversible**.
+Everything we just did was **non-destructive, reversible**.
 
 Watch:
 
 ```python
-(
-    <previous_completed_query>
-    .explode('children').unnest('children')
-    .explode('children').unnest('children')
-    .explode('children').unnest('children')
-    .drop('entity')
-)
+.explode('children').unnest('children')
+.explode('children').unnest('children')
+.explode('children').unnest('children')
+.drop('entity')
 ```
 
 ```json
@@ -837,11 +709,21 @@ Watch:
 ]
 ```
 
+And we're right back where we started. Same data.
+
+> [!TIP]
+> - `.unnest(*colnames)` replaces struct columns with their fields.
+> - `.explode(*colnames)` replaces a list row with rows for each of its items.
+>   This is effectively an **undo-button** for a `group_by().agg()` that aggregated
+>   values as lists.
+
+---
+
 # Real production-ready report tree
 
 Using the fundamentals learned so far, let's make a "legit" report tree
-for a UI to render as a fancy nested hierarchy table with all the bells
-and whistles. Even sparklines! (mini inline charts).
+for a UI to render a fancy, nested, hierarchy table with all the bells
+and whistles. Even sparklines. (mini inline charts).
 
 We will take this dataset of all 8700 netflix movies and tv shows...
 
@@ -871,9 +753,36 @@ for rendering, without any post-processing/assembling of the tree.
 
 Do it end-to-end, in a single query.
 
+## Report Requirements (*an API request comes in...*)
+
+Make a tree with the hierarchy, **Totals -> Type -> Rating -> Country**
+
+- Level 0
+  - Show me the total **sum**, **mean**, and **median** of `runtime`
+  - Break it down by **Type** (tv or movie).
+    - Show me all categories, sorted.
+- Level 1: **Type**
+  - Show me the **sum**, **mean**, and **median** of `runtime`
+  - Break it down by **Rating** (e.g. G, PG, etc.)
+    - Show me the **top 2** results having the highest **sum** of `runtime`
+    - Also show me the total **sum**, **mean**, and **median** of `runtime`
+      of the combined other groups not included in the top-N.
+- Level 2: **Type** -> **Rating**
+  - Show me the **sum**, **mean**, and **median** of `runtime`
+  - Break it down by **Country**
+    - Show me the **top 3** results having the highest **sum** of `runtime`
+    - Also show me the total **sum**, **mean**, and **median** of `runtime`
+      of the combined other groups not included in the top-N.
+- Level 3: **Type** -> **Rating** -> **Country**
+  - Show me the **sum**, **mean**, and **median** of `runtime`
+  - Show me a **sparkbar** (little inline bar chart) of the top 10 unique `runtime` values.
+  - No breakdown
+
+
+
 ## End Result
 
-(Note: The `metrics[].values` field is mainly used for inline charts, e.g. sparklines.)
+Here's that report. Polars output:
 
 ```json
 {
@@ -937,12 +846,7 @@ Do it end-to-end, in a single query.
                       "breakdown": null
                     },
                     {
-                      "key": {
-                        "kind": "dimension_value",
-                        "ref_id": "dim:show.country",
-                        "value": "United Kingdom",
-                        "label": null
-                      },
+                      "key": { "kind": "dimension_value", "ref_id": "dim:show.country", "value": "United Kingdom", "label": null },
                       "metrics": [
                         { "metric_id": "metric.sum:show.runtime", "value": "85839", "values": null },
                         { "metric_id": "metric.median:show.runtime", "value": "403.0", "values": null },
@@ -1133,12 +1037,7 @@ Do it end-to-end, in a single query.
                       "breakdown": null
                     },
                     {
-                      "key": {
-                        "kind": "dimension_value",
-                        "ref_id": "dim:show.country",
-                        "value": "United Kingdom",
-                        "label": null
-                      },
+                      "key": { "kind": "dimension_value", "ref_id": "dim:show.country", "value": "United Kingdom", "label": null },
                       "metrics": [
                         { "metric_id": "metric.sum:show.runtime", "value": "10783", "values": null },
                         { "metric_id": "metric.median:show.runtime", "value": "92.0", "values": null },
@@ -1262,9 +1161,50 @@ Do it end-to-end, in a single query.
 }
 ```
 
+## Tree structure
+
+The model for that tree is remarkably simple, and can be extended
+to nearly any use-case. Here's a TS definition:
+
+```ts
+type NestedTableReport = {
+    catalog: any  // Not defined here, for brevity
+    root: ReportRow
+}
+type ReportRow = {
+    key: RowKey
+    metrics: MetricValue[]
+    breakdown: ReportBreakdown | null
+}
+type ReportBreakdown = {
+    by: { how: 'dimension_values'; dim_id: string }
+    limit: LimitMetricTopN | null
+    children: ReportRow[]  // <<<<<<----------------- RECURSE
+}
+type RowKey = {
+    kind: 'root_total' | 'dimension_value' | 'total_other'  // total_other is used when parent.brekdown.limit is set.
+    ref_id: string  // The thing that defines this key
+    value: string | null
+    label: string | null
+}
+type MetricValue = {
+    metric_id: string
+    value: string | null  // Value-always-string: Client MUST lookup + parse everything.
+    values: string[] | null  // For example: Inline sparkline chart has values
+}
+type LimitMetricTopN = {
+    type: 'metric_top_n'
+    from_total_n: number
+    kept_n: number
+    with_values: 'highest' | 'lowest'
+    metric_id: string
+}
+```
+
+
 ## Catalog
 
-This is accompanied by a catalog (produced outside polars) with lookups that tell
+The tree is accompanied by a catalog, produced outside polars, with lookups to tell
 the UI how to display stuff.
 
 For example, the "Total Runtime" metric should tell the UI to **humanize** its durations
@@ -1272,9 +1212,6 @@ up to a maximum unit, *days* (`d`), since the values will be huge.
 
 You might do the same thing for currency values in financial reports, configuring
 `humanize: { min_unit: "thousands", max_unit: "billions" }`.
-
-Also, **spark chart** metrics (little inline chart) will need to specify the mark type,
-e.g. line, bar, etc.
 
 ```json
 {
@@ -1348,100 +1285,27 @@ e.g. line, bar, etc.
 }
 ```
 
-## Tree object structure (in TS)
 
-The data model for the report tree is remarkably simple, and can be extended
-to nearly any use-case.
+## Performance
 
-Tree we created in Polars:
-
-```ts
-type NestedTableReport = {
-    catalog: any  // Not defined here, for brevity
-    root: ReportRow
-}
-type ReportRow = {
-    key: Report
-    metrics: MetricValue[]
-    breakdown: ReportBreakdown | null
-}
-// Every row has a key, with `kind` and `ref_id`.
-type RowKey = {
-    // kind='total' happens at the root
-    // kind='total_other' happens when children are limited
-    kind: 'root_total' | 'dimension_value' | 'total_other'
-    ref_id: string  // The thing that defines this key
-    value: string | null
-    label: string | null
-}
-type MetricValue = {
-    metric_id: string
-    // We have a strict, "value-is-always-string" contract. Force the client
-    // to look up the metric in catalog for how to parse and format it.
-    value: string | null
-    // An inline chart like a sparkline, for instance, requires multiple values
-    values: string[] | null
-}
-type ReportBreakdown = {
-    by: { how: 'dimension_values'; dim_id: string }
-    limit: LimitMetricTopN | null
-    children: ReportRow[]  // <---- RECURSE
-}
-type LimitMetricTopN = {
-    type: 'metric_top_n'
-    from_total_n: number
-    kept_n: number
-    with_values: 'highest' | 'lowest'
-    metric_id: string
-}
-```
-
-
----
-
-
-When I first wrote this query, it took **3 milliseconds** to produce a
+When I first wrote the query, it took **3 milliseconds** to produce a
 **20,000-line** (indented) JSON tree.
 
 That was too big to show here. So I added the `limit: { type: "metric_top_n" }` feature,
 to limit `children` to the ranked top-N, and include a
 `key: { kind: "total_other" }` row at the bottom of `children`, with metrics aggregated
 separately for the not-included rows. We applied the `limit` logic for two levels in our
-tree.
+tree. That was tricky.
 
 Now the query takes **4 milliseconds**.
-
-
-## Report Requirements (query we receive from API request)
-
-Make a tree with the hierarchy, **Root Totals -> Type -> Rating -> Country**
-
-- Level 0: **Root totals**
-  - Show me the **sum**, **mean**, and **median** of `runtime`
-  - Break it down by **Type** (tv or movie).
-    - Show me all categories, sorted.
-- Level 1: **Type**
-  - Show me the **sum**, **mean**, and **median** of `runtime`
-  - Break it down by **Rating** (e.g. G, PG, etc.)
-    - Show me the **top 2** results with the highest **sum** of `runtime`
-    - Also show me the total **sum**, **mean**, and **median** of `runtime`
-      of all the other groups not included in the top-N.
-- Level 2: **Rating**
-  - Show me the **sum**, **mean**, and **median** of `runtime`
-  - Break it down by **Country**
-    - Show me the **top 3** results with the highest **sum** of `runtime`
-    - Also show me the total **sum**, **mean**, and **median** of `runtime`
-      of the other groups not included in the top-N.
-- Level 3: **Country**
-  - Show me the **sum**, **mean**, and **median** of `runtime`
-  - Show me a **sparkbar** (little inline bar chart) of the top 10 unique `runtime` values.
-  - No breakdown
 
 
 ## Why sum, mean, median, and spark chart?
 
 These represent 4 fundamentally different kinds of metrics, in terms
 of how your tree algorithm will handle them.
+
+---
 
 If you can do all 4, then you can do most things.
 
@@ -1453,9 +1317,10 @@ If you can do all 4, then you can do most things.
 - **median**: Non-additive, and *cannot* be computed from additive metrics. We need the
   full-grain fact values every time.
   - A **distinct count** is another example of this kind of metric.
-  - That's why you almost never see **median** in reports, and why most engines
-    will prefer to *estimate* distinct count instead of computing it exactly.
-- **spark chart**: Non-additive, cannot be computed from additive metrics,
+  - This kind of metric is expensive. That's why you almost never see **median** in
+    reports, and why most engines prefer to *estimate* distinct count instead of
+    computing it exactly.
+- **sparkline**: Non-additive, cannot be computed from additive metrics,
   *and* we actually need to put full-grain values in the report output. Or at least
   values from the prior level's grain.
 
@@ -1474,20 +1339,17 @@ so it's clear how this query can be constructed dynamically.
 
 > [!IMPORTANT]
 > **A note on column naming**: When we automate this, input column names will be
-> arbitrary. You'll want to **prefix** everything carefully, and use Polars
-> `cs` (selectors) API to access them in expressions.
+> arbitrary. You'll want to **prefix** everything carefully, and use the Polars
+> `cs` (column-selectors) API to access them in expressions.
 >
-> That's why you'll see `metric_sum_runtime` in my code, instead of `runtime_sum`.
-> This way, when things go dynamic, we can safely use `cs.starts_with("metric_sum")`
-> to access *all* the 'sum' metric columns in the data.
-> 
-> So, instead of `c.metric_sum_runtime.sum()`, you'd
-> use `cs.starts_with("metric_sum").sum()`,
+> That's why you'll see naming like `metric_sum_runtime` in my code.
+> This way, when things go dynamic, we can safely use `cs.starts_with("metric_sum").sum()`
+> to sum the appropriate metrics, without risk of naming collisions.
 
+---
 
-This will *look* like a lot of code, but notice each level of the plan has
-nearly the same structure. Your dynamic query-building function will likely
-be smaller than this.
+I pulled out very-frequently-reused expressions into variables. These are only some,
+not all, of the pieces you'll need to create dynamically.
 
 ```python
 # Expressions we will use repeatedly. The redundancy got too annoying.
@@ -1564,11 +1426,18 @@ def limit_slice_other_agg_utils(*, slice: int) -> tuple[pl.Expr, ...]:
 def append_to_list(lst: pl.Expr, *items: pl.Expr) -> pl.Expr:
     # Just makes the code clearer at the call site
     return lst.list.concat(pl.concat_list(*items))
+```
+
+---
+
+### Now build the tree.
+
+At first, this may *look* like a lot of code. But you'll notice each level
+of the plan has nearly identical structure. There's a lot of duplication.
+Your dynamic query-building function could be smaller than this.
 
 
-# Build tree
-# ###################################################################################
-# ###################################################################################
+```python
 lf = (
     base
     # Prep: Initialize additive metrics that will move up all tree levels
@@ -1769,16 +1638,21 @@ lf = (
     # -----------------------------------------------------------------------------------
     # Finish: pack into root item, i.e. `shape: (1, 1)`
     # ===================================================================================
-    .select(root=c.report)
+    .select(c.report)
+    .collect(engine='streaming')
+    .item()  # Validate that we only produced one value, and grab it.
 )
 ```
 
-And that's it.
+That's it.
 
-There isn't another SQL engine on the planet that can make this process as
-ergonomic as it is in Polars. 
+No other SQL engine makes this process as ergonomic as it is in Polars. 
+
+We didn't even need any joins, subqueries, window functions, or filtering.
 
 ---
+
+### Notes on the code
 
 A couple things that might be unintuitive:
 
